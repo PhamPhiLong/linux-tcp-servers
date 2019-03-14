@@ -11,5 +11,6 @@
 
 namespace tcpserver {
     extern const char *DEFAULT_PORT;
+    extern const int DEFAULT_WORKER_PROCESS_NUMBER;
 }
 #endif /* LINUX_TCP_SERVERS_CONSTANTS_H */
