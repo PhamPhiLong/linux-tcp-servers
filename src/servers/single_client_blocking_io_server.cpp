@@ -47,26 +47,26 @@
 #include "server_utility.h"
 
 int main(int argc, char *argv[]) {
-    tcpserver::log(argv[0]);           /* Print server process name */
+    concurrent_servers::log(argv[0]);           /* Print server process name */
 
-    const std::string port_num = (argc >= 2) ? argv[1] : tcpserver::DEFAULT_PORT;
+    const std::string port_num = (argc >= 2) ? argv[1] : concurrent_servers::DEFAULT_PORT;
     const int backlog = (argc < 3) ? DEFAULT_BACKLOG : atoi(argv[2]);
-    tcpserver::file_descriptor server_sfd{};
+    concurrent_servers::file_descriptor server_sfd{};
 
     try {
-        server_sfd = tcpserver::setup_server_tcp_socket(port_num, backlog);
+        server_sfd = concurrent_servers::setup_server_tcp_socket(port_num, backlog);
         struct sockaddr_storage cli_addr{};
         char buffer[BUFF_SIZE];
 
         for (;;) {
             int cli_len = sizeof(cli_addr); /* Always reset this value */
-            tcpserver::file_descriptor client_sfd{};
+            concurrent_servers::file_descriptor client_sfd{};
 
             if (!client_sfd.set_fd(accept(server_sfd.get_fd(), (struct sockaddr *) &cli_addr, (socklen_t * ) &cli_len))) {  /* Accept a new connection */
                 throw std::runtime_error("Could not accept a new connection");
             }
 
-            tcpserver::log_client_info(cli_addr);
+            concurrent_servers::log_client_info(cli_addr);
 
             for (;;) {
                 // Read data sent from client
@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
             }
         }
     } catch (const std::runtime_error& e) {
-        std::cerr << e.what() << std::endl;
+        concurrent_servers::log_error(e.what(), "\n\t", strerror(errno));
         server_sfd.close_fd();
         exit(EXIT_FAILURE);
     }

@@ -2,22 +2,25 @@ CPP := g++
 
 
 BUILD_DIR = build
-CPPFLAGS = -std=c++17 -Wall -Wextra -Wshadow -Weffc++ -Wstrict-aliasing -pedantic -Werror $(INCLUDE_DIR)
+CPP_FLAGS = -std=c++17 -Wall -Wextra -Wshadow -Weffc++ -Wstrict-aliasing -pedantic -Werror $(INCLUDE_DIR)
 DEP_DIR := $(BUILD_DIR)/dependency
 DEPFLAGS = -MT $@ -MMD -MP -MF $(DEP_DIR)/$*.Td
 LDIR = src/lib
 SRC_DIR = src
-CPP_LIBS = -lstdc++
-COMPILE_CPP = $(CPP) $(DEPFLAGS) $(CPPFLAGS) $(CPP_LIBS) -c $<
+CPP_LIBS = -lstdc++ -lpthread
+COMPILE_CPP = $(CPP) $(DEPFLAGS) $(CPP_FLAGS) $(CPP_LIBS) -c $<
 POSTCOMPILE = @mv -f $(DEP_DIR)/$*.Td $(DEP_DIR)/$*.d && touch $@
 INCLUDE_DIR = -Isrc/include \
-              -Isrc/utilities
+              -Isrc/utilities \
+              -Isrc
 HEADERS = $(wildcard $(INCLUDE_DIR)/*.h)
 DEPS = $(patsubst %,$ (INCLUDE_DIR)/%, $(HEADERS))
 
 BIN_SRC = $(wildcard $(SRC_DIR)/servers/*.cpp) $(wildcard $(SRC_DIR)/clients/*.cpp)
 SRC = $(wildcard $(SRC_DIR)/*/*.cpp)
-CPPFLAGS += -DDEBUG -ggdb -O0
+#DEBUG_FLAG =  -ggdb -O0
+DEBUG_FLAG =
+CPP_FLAGS += $(DEBUG_FLAG)
 OBJ_DIR = $(BUILD_DIR)/obj
 OBJ = $(filter-out $(OBJ_DIR)/clients/%.o $(OBJ_DIR)/servers/%.o, $(patsubst $(SRC_DIR)%.cpp, $(OBJ_DIR)%.o, $(SRC)))
 BIN_DIR = $(BUILD_DIR)/bin

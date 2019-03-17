@@ -31,7 +31,7 @@
 
 #include "constants.h"
 
-namespace tcpserver {
+namespace concurrent_servers {
     const char *DEFAULT_PORT{"1606"};
     const int DEFAULT_WORKER_PROCESS_NUMBER{6};
 }

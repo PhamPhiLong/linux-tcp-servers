@@ -9,7 +9,7 @@
 #define DEFAULT_BACKLOG 50
 #define BUFF_SIZE 256
 
-namespace tcpserver {
+namespace concurrent_servers {
     extern const char *DEFAULT_PORT;
     extern const int DEFAULT_WORKER_PROCESS_NUMBER;
 }

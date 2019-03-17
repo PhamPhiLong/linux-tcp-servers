@@ -38,54 +38,68 @@
 #include <netdb.h>
 #include <memory.h>
 #include <unistd.h>
+#include <thread>
+#include <vector>
 
 #include "constants.h"
 #include "print_utility.h"
 
+static const int num_threads = 10;
+
+void send_ping_pong_message(const int portno, const struct hostent * const server);
+
 int main(int argc, char *argv[]) {
+    std::vector<std::thread> threads{};
     const int portno = (argc < 3) ? atoi(concurrent_servers::DEFAULT_PORT) : atoi(argv[2]);
-    const int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        perror("ERROR opening socket");
-        exit(EXIT_FAILURE);
-    }
-
     struct hostent *server = (argc < 2) ? gethostbyname("localhost") : gethostbyname(argv[1]);
-    if (server == NULL) {
-        std::cerr << "ERROR, no such host" << std::endl;
-        exit(EXIT_SUCCESS);
+
+    for (int i{0}; i<=num_threads; ++i) {
+        threads.emplace_back(send_ping_pong_message, portno, server);
     }
 
-    struct sockaddr_in serv_addr;
-    memset((char *) &serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    bcopy((char *)server->h_addr,
-          (char *)&serv_addr.sin_addr.s_addr,
-          server->h_length);
-    serv_addr.sin_port = htons(portno);
-    if (connect(sockfd,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) < 0) {
-        perror("ERROR connecting");
-        exit(EXIT_FAILURE);
+    for (auto& thread : threads) {
+        thread.join();
     }
 
-    concurrent_servers::log("Please enter the message: ");
-    char buffer[BUFF_SIZE];
-    memset(buffer, 0, BUFF_SIZE);
-    fgets(buffer, BUFF_SIZE, stdin);
-
-    if (write(sockfd,buffer,strlen(buffer)) < 0) {
-        perror("ERROR writing to socket");
-        exit(EXIT_FAILURE);
-    }
-
-    concurrent_servers::log("Please enter to read replied message from server: ");
-    fgets(buffer, BUFF_SIZE, stdin);
-
-    memset(buffer, 0, BUFF_SIZE);
-    if (read(sockfd, buffer, BUFF_SIZE) < 0) {
-        perror("ERROR reading from socket");
-        exit(EXIT_FAILURE);
-    }
-    std::cout << buffer << std::endl;
     return 0;
+}
+
+void send_ping_pong_message(const int portno, const struct hostent * const server) {
+    for (int i{1}; i<=4; ++i) {
+        const int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0) {
+            perror("ERROR opening socket");
+            exit(EXIT_FAILURE);
+        }
+
+        if (server == nullptr) {
+            std::cerr << "ERROR, no such host" << std::endl;
+            exit(EXIT_SUCCESS);
+        }
+
+        struct sockaddr_in serv_addr{};
+        memset((char *) &serv_addr, 0, sizeof(serv_addr));
+        serv_addr.sin_family = AF_INET;
+        bcopy((char *) server->h_addr,
+              (char *) &serv_addr.sin_addr.s_addr,
+              server->h_length);
+        serv_addr.sin_port = htons(portno);
+        if (connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+            perror("ERROR connecting");
+            exit(EXIT_FAILURE);
+        }
+
+        char buffer[BUFF_SIZE];
+        memset(buffer, 0, BUFF_SIZE);
+        const std::string msg{"ping pong " + std::to_string(i)};
+
+        for (int j{1}; j <= 10; ++j) {
+            if (write(sockfd, msg.data(), msg.length()) < 0) {
+                perror("ERROR writing to socket");
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        close(sockfd);
+    }
 }

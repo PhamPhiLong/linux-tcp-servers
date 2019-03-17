@@ -32,7 +32,6 @@
 
 #include <string.h>
 #include <sys/socket.h>
-#include <array>
 #include <sys/epoll.h>
 
 #include "constants.h"
@@ -40,12 +39,17 @@
 #include "file_descriptor.h"
 #include "server_utility.h"
 
-int main(int argc, char *argv[]) {
-    concurrent_servers::log(argv[0]);           // Print server process name
 
+int main(int argc, char *argv[]) {
     const std::string port_num = (argc >= 2) ? argv[1] : concurrent_servers::DEFAULT_PORT;
-    const int backlog = (argc < 3) ? DEFAULT_BACKLOG : atoi(argv[2]);
+    const int backlog = (argc >= 3) ? atoi(argv[2]) : DEFAULT_BACKLOG;
+    const int worker_process_num = (argc >= 4) ? atoi(argv[3]) : concurrent_servers::DEFAULT_WORKER_PROCESS_NUMBER;
     concurrent_servers::file_descriptor server_sfd;
+
+    const size_t process_name_len{strlen(argv[0])};
+    strncpy(argv[0], "tcp-server master process", process_name_len); /* Change process name */
+    concurrent_servers::log_info(argv[0]);           // Print process name
+    strncpy(argv[0], "tcp-server worker process pid=", process_name_len); /* Change process name */
 
     try {
         server_sfd = concurrent_servers::setup_server_tcp_socket(port_num, backlog, true);
@@ -60,14 +64,30 @@ int main(int argc, char *argv[]) {
         struct epoll_event event{};
         memset(&event, 0, sizeof(event));
         event.data.fd = server_sfd.get_fd();
-        event.events = EPOLLIN | EPOLLET; // edge-triggered
+        event.events = EPOLLIN | EPOLLEXCLUSIVE; // use level-triggered and EPOLLEXCLUSIVE to distribute accept() to
+                                                 // multiple threads or processes
         if (epoll_ctl(epoll_fd.get_fd(), EPOLL_CTL_ADD, server_sfd.get_fd(), &event) == -1) {
             throw std::runtime_error("epoll_ctl() failed");
         }
 
-        concurrent_servers::epoll_event_loop(server_sfd, epoll_fd);
+        // Pre-fork worker processes to distribute accept() and read()
+        // for accept(), the server listening socket fd
+        for (int i{0}; i < worker_process_num; ++ i) {
+            int child_pid;
+
+            if ((child_pid = fork()) == -1) { // failed to fork a child process
+                throw std::runtime_error("Failed to fork worker processes");
+            } else if (child_pid > 0) { // parent process
+                concurrent_servers::log_info("\033[32m", "Forked new worker process with pid=", child_pid, "\033[0m");
+            } else if (child_pid == 0) { // child process
+                concurrent_servers::epoll_event_loop(server_sfd, epoll_fd);
+            }
+        }
+
+        bool terminate_server{false};
+        std::cin >> terminate_server;
     } catch (const std::runtime_error& e) {
-        concurrent_servers::log_error(e.what(), "\n\t", strerror(errno));
+        concurrent_servers::log_error(e.what(), "\t", strerror(errno));
         server_sfd.close_fd();
         exit(EXIT_FAILURE);
     }

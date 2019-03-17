@@ -29,44 +29,19 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "multi_worker_reuseport_nonblocking_multiplexing_io_server.h"
+#include "print_utility.h"
 
-#ifndef LINUX_TCP_SERVERS_PRINT_UTILITY_H
-#define LINUX_TCP_SERVERS_PRINT_UTILITY_H
-
-#include <string>
-#include <iostream>
-
-namespace concurrent_servers {
-    template<typename Content>
-    void log(const Content &content) {
-        std::cout << content << std::endl;
+struct read_handler {
+    void operator()(const std::string &worker_process_id, char* buff, size_t buff_len) const {
+        concurrent_servers::log_info(worker_process_id, "  received: ", std::string{buff, buff_len});
     }
+};
+int main(int argc, char *argv[]) {
+    const std::string port_num = (argc >= 2) ? argv[1] : concurrent_servers::DEFAULT_PORT;
+    const int backlog = (argc >= 3) ? atoi(argv[2]) : DEFAULT_BACKLOG;
+    const int worker_process_num = (argc >= 4) ? atoi(argv[3]) : concurrent_servers::DEFAULT_WORKER_PROCESS_NUMBER;
+    const concurrent_servers::linux_concurrent_server<read_handler> server{worker_process_num, port_num, backlog};
 
-    template<typename Content, typename... LogContents>
-    void log(const Content &content, const LogContents &... log_contents) {
-        std::cout << content;
-        return log(log_contents...);
-    }
-
-    template<typename... LogContents>
-    void log_debug(const LogContents &... log_contents) {
-        return log("DEBUG: ", log_contents...);
-    }
-
-    template<typename... LogContents>
-    void log_info(const LogContents &... log_contents) {
-        return log("DEBUG: ", log_contents...);
-    }
-
-    template<typename... LogContents>
-    void log_warning(const LogContents &... log_contents) {
-        return log("WARNING: ", log_contents...);
-    }
-
-    template<typename... LogContents>
-    void log_error(const LogContents &... log_contents) {
-        return log("ERROR: ", log_contents...);
-    }
+    server.start();
 }
-
-#endif /* LINUX_TCP_SERVERS_PRINT_UTILITY_H */

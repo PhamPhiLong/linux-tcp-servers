@@ -36,9 +36,10 @@
 #include <string>
 #include <iostream>
 
-namespace tcpserver {
-    void log_client_info(const struct sockaddr_storage& cli_addr);
-    tcpserver::file_descriptor setup_server_tcp_socket(const std::string& port_num, const int backlog, bool is_nonblock = false);
+namespace concurrent_servers {
+    void log_client_info(const struct sockaddr_storage& cli_addr, const std::string &prefix_log="");
+    concurrent_servers::file_descriptor setup_server_tcp_socket(const std::string& port_num, const int backlog, bool is_nonblock = false, bool reuse_port = false);
+    void epoll_event_loop(const concurrent_servers::file_descriptor& server_sfd, const concurrent_servers::file_descriptor& epoll_fd);
 }
 
 #endif /* LINUX_TCP_SERVERS_SERVER_UTILITY_H */

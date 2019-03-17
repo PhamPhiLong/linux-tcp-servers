@@ -49,14 +49,14 @@
 #include "server_utility.h"
 
 int main(int argc, char *argv[]) {
-    tcpserver::log(argv[0]);           // Print server process name
+    concurrent_servers::log(argv[0]);           // Print server process name
 
-    const std::string port_num = (argc >= 2) ? argv[1] : tcpserver::DEFAULT_PORT;
+    const std::string port_num = (argc >= 2) ? argv[1] : concurrent_servers::DEFAULT_PORT;
     const int backlog = (argc < 3) ? DEFAULT_BACKLOG : atoi(argv[2]);
-    tcpserver::file_descriptor server_sfd{};
+    concurrent_servers::file_descriptor server_sfd{};
 
     try {
-        server_sfd = tcpserver::setup_server_tcp_socket(port_num, backlog, true);
+        server_sfd = concurrent_servers::setup_server_tcp_socket(port_num, backlog, true);
 
         // Setup select()
         int max_sfd(server_sfd.get_fd()); /* highest-numbered file descriptor in any of the three sets */
@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
                     sfd_ready_no -= 1; // reduce the number of unprocessed events in read set
 
                     if (server_sfd.get_fd() == i) { // server received a new connection
-                        tcpserver::file_descriptor client_sfd{};
+                        concurrent_servers::file_descriptor client_sfd{};
                         for (;;) {
                             int cli_len = sizeof(cli_addr); // Always reset this value before calling accept()
                             if ((!client_sfd.set_fd(
@@ -96,13 +96,13 @@ int main(int argc, char *argv[]) {
                                 }
                             }
 
-                            tcpserver::log_client_info(cli_addr);
-                            tcpserver::log("Add new client socket fd ", client_sfd.get_fd());
+                            concurrent_servers::log_client_info(cli_addr);
+                            concurrent_servers::log("Add new client socket fd ", client_sfd.get_fd());
                             FD_SET(client_sfd.get_fd(), &read_fd_backup_set);
                             max_sfd = std::max(max_sfd, client_sfd.get_fd());
                         }
                     } else { // socket is readable
-                        tcpserver::file_descriptor client_sfd{i};
+                        concurrent_servers::file_descriptor client_sfd{i};
                         bool connection_is_closed{false};
 
                         for (;;) {
@@ -142,7 +142,7 @@ int main(int argc, char *argv[]) {
                             if (i == max_sfd) {
                                 // find the new max_sfd
                                 for (max_sfd -= 1; max_sfd >= 0 and !FD_ISSET(max_sfd, &read_fd_backup_set); --max_sfd) {}
-                                tcpserver::log("new max_sfd = ", max_sfd);
+                                concurrent_servers::log("new max_sfd = ", max_sfd);
                             }
                         }
                     }
@@ -150,7 +150,7 @@ int main(int argc, char *argv[]) {
             }
         }
     } catch (const std::runtime_error& e) {
-        std::cerr << e.what() << std::endl;
+        concurrent_servers::log_error(e.what(), "\n\t", strerror(errno));
         server_sfd.close_fd();
         exit(EXIT_FAILURE);
     }
