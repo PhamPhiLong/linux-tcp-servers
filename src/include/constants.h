@@ -7,7 +7,7 @@
 #define LINUX_TCP_SERVERS_CONSTANTS_H
 
 #define DEFAULT_BACKLOG 50
-#define BUFF_SIZE 256
+#define BUFF_SIZE 1000
 
 namespace concurrent_servers {
     extern const char *DEFAULT_PORT;

@@ -38,6 +38,7 @@
 #include <netdb.h>
 #include <memory.h>
 #include <unistd.h>
+#include <vector>
 
 #include "constants.h"
 #include "print_utility.h"
@@ -68,24 +69,23 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    concurrent_servers::log("Please enter the message: ");
-    char buffer[BUFF_SIZE];
-    memset(buffer, 0, BUFF_SIZE);
-    fgets(buffer, BUFF_SIZE, stdin);
+    std::string write_buffer = "Hello, I am the client.\nPlease echo back what I'm saying.";
 
-    if (write(sockfd,buffer,strlen(buffer)) < 0) {
-        perror("ERROR writing to socket");
-        exit(EXIT_FAILURE);
+    for (int i=0; i<10; i++) {
+        if (write(sockfd,write_buffer.data(),write_buffer.size()) < 0) {
+            perror("ERROR writing to socket");
+            std::cout << "ERROR writing to socket" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+
+        std::vector<char> read_buffer(1024, 0);
+        if (read(sockfd, read_buffer.data(), read_buffer.size()) < 0) {
+            perror("ERROR reading from socket");
+            exit(EXIT_FAILURE);
+        }
+
+        std::cout << read_buffer.data() << std::endl;
     }
 
-    concurrent_servers::log("Please enter to read replied message from server: ");
-    fgets(buffer, BUFF_SIZE, stdin);
-
-    memset(buffer, 0, BUFF_SIZE);
-    if (read(sockfd, buffer, BUFF_SIZE) < 0) {
-        perror("ERROR reading from socket");
-        exit(EXIT_FAILURE);
-    }
-    std::cout << buffer << std::endl;
     return 0;
 }

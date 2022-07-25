@@ -37,41 +37,25 @@
 #include <fcntl.h>
 
 namespace concurrent_servers {
-class file_descriptor {
-public:
-    explicit file_descriptor() = default;
-    explicit file_descriptor(const int fd) : _fd{fd} {}
 
-    bool set_fd(const int new_fd) {
-        _fd = new_fd;
-        return new_fd != -1;
+bool set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) return false;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+bool is_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    return (flags & O_NONBLOCK) != 0;
+}
+
+void close_fd(int fd) {
+    if (fd != -1) {
+        close(fd);
+        fd = -1;
     }
+}
 
-    int get_fd() const {
-        return _fd;
-    }
-
-    bool set_nonblocking() const {
-        int flags = fcntl(_fd, F_GETFL, 0);
-        if (flags == -1) return false;
-        return fcntl(_fd, F_SETFL, flags | O_NONBLOCK) == 0;
-    }
-
-    bool is_nonblocking() const {
-        int flags = fcntl(_fd, F_GETFL, 0);
-        return (flags & O_NONBLOCK) != 0;
-    }
-
-    void close_fd() {
-        if (_fd != -1) {
-            close(_fd);
-            _fd = -1;
-        }
-    }
-
-protected:
-    int _fd = -1;
-};
 }
 
 #endif //LINUX_TCP_SERVERS_FILE_DESCRIPTOR_H

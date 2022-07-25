@@ -48,13 +48,13 @@ namespace concurrent_servers {
             case AF_INET:   /* IPv4 address. */ {
                 char addr_str[INET_ADDRSTRLEN];
                 auto *p = (struct sockaddr_in *) &cli_addr;
-                concurrent_servers::log_info(prefix_log, "New client connected: address=", inet_ntop(p->sin_family, &p->sin_addr, addr_str, INET_ADDRSTRLEN), ", port=", p->sin_port);
+                concurrent_servers::log_info(prefix_log, "New IPv4 client connected: address=", inet_ntop(p->sin_family, &p->sin_addr, addr_str, INET_ADDRSTRLEN), ", port=", p->sin_port);
                 break;
             }
             case AF_INET6:   /* IPv6 address. */ {
                 char addr_str[INET6_ADDRSTRLEN];
                 auto *p = (struct sockaddr_in6 *) &cli_addr;
-                concurrent_servers::log_info(prefix_log, "New client connected: address=", inet_ntop(p->sin6_family, &p->sin6_addr, addr_str, INET_ADDRSTRLEN), ", port=", p->sin6_port);;
+                concurrent_servers::log_info(prefix_log, "New IPv6 client connected: address=", inet_ntop(p->sin6_family, &p->sin6_addr, addr_str, INET_ADDRSTRLEN), ", port=", p->sin6_port);;
                 break;
             }
             default: {}
@@ -134,6 +134,11 @@ namespace concurrent_servers {
             for (int i{0}; i < nfds; ++i) {
                 concurrent_servers::log_info(prefix_log, "epoll_wait() return, fd=", events[i].data.fd, " event ", events[i].events);
 
+                if (events[i].data.fd == server_sfd.get_fd()) {
+
+                } else {
+
+                }
                 if (events[i].events & EPOLLERR) {
                     concurrent_servers::log_warning(prefix_log + "epoll_wait() error on fd ", events[i].data.fd, " event ", events[i].events);
 //                    epoll_ctl(epoll_fd.get_fd(), EPOLL_CTL_DEL, events[i].data.fd, nullptr);
