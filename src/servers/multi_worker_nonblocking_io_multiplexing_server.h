@@ -43,6 +43,7 @@
 #include <memory>
 #include <shared_mutex>
 #include <mutex>
+#include <thread>
 
 #include "constants.h"
 #include "print_utility.h"
@@ -87,21 +88,16 @@ public:
 
             // Pre-fork worker processes to distribute accept() and read()
             // for accept(), the server listening socket fd
-            for (int i{0}; i < worker_num_; ++ i) {
-                int child_pid;
-
-                if ((child_pid = fork()) == -1) { // failed to fork a child process
-                    throw std::runtime_error("Failed to fork worker processes");
-                } else if (child_pid > 0) { // parent process
-                    concurrent_servers::log_info("\033[32m", "Forked new worker process with pid=", child_pid, "\033[0m");
-                } else if (child_pid == 0) { // child process
-                    Worker worker{server_sfd_, epoll_fd, i, this->data_manager_};
+            for (int i{0}; i < worker_num_; ++i) {
+                workers_threads.emplace_back([this, epoll_fd, i]() {
+                    Worker worker{server_sfd_, epoll_fd, i, data_manager_};
                     worker.start();
-                }
+                });
             }
 
-            bool terminate_server{false};
-            std::cin >> terminate_server;
+            for (auto &thread : workers_threads) {
+                thread.join();
+            }
         } catch (const std::runtime_error& e) {
             concurrent_servers::log_error(e.what(), "\t", strerror(errno));
             close(server_sfd_);
@@ -121,6 +117,12 @@ private:
                 write_index_{0},
                 ready_for_write_{false} {
             
+        }
+
+        void reset() {
+            read_index_ = 0;
+            write_index_ = 0;
+            ready_for_write_ = false;
         }
 
         int conn_fd_;
@@ -175,28 +177,30 @@ private:
                     throw std::runtime_error(prefix_log_ + "epoll_wait() failed");
                 }
 
+                concurrent_servers::log_info(PREFIX_LOG, "epoll_wait() returns, nfds=", nfds, " event ");
                 for (int i{0}; i < nfds; ++i) {
-                    auto *conn_data = (ConnectionData *)events_[i].data.ptr;
+                    auto *conn_data = (ConnectionData *)(events_[i].data.ptr);
+
                     if (conn_data->conn_fd_ == server_sfd_) {
-                        concurrent_servers::log_info(PREFIX_LOG, "epoll_wait() returns, fd=", conn_data->conn_fd_, " event ", events_[i].events, " this is the server listening fd");
-                        acceptConnections(events_[i], conn_data);
+                        acceptConnections(events_[i].events, conn_data);
                     } else {
-                        concurrent_servers::log_info(PREFIX_LOG, "epoll_wait() returns, fd=", conn_data->conn_fd_, " event ", events_[i].events, " this is a connection fd");
+                        concurrent_servers::log_info(PREFIX_LOG, "\tevents_[i].data.ptr = " , events_[i].data.ptr);
+                        concurrent_servers::log_info(PREFIX_LOG, "\tfd=", conn_data->conn_fd_, " event ", events_[i].events, " this is a connection fd");
 
                         if (events_[i].events & EPOLLERR) {
-                            concurrent_servers::log_warning(PREFIX_LOG, "epoll_wait() error on fd ", conn_data->conn_fd_, " event ", events_[i].events);
+                            concurrent_servers::log_warning(PREFIX_LOG, "\tepoll_wait() error on fd ", conn_data->conn_fd_, " event ", events_[i].events);
                             closeConnection(epoll_fd_, conn_data->conn_fd_);
                             continue;
                         } else if (events_[i].events & EPOLLRDHUP) {
-                            concurrent_servers::log_warning(PREFIX_LOG, "  Connection closed, fd=", conn_data->conn_fd_);
+                            concurrent_servers::log_warning(PREFIX_LOG, "\tConnection closed, fd=", conn_data->conn_fd_);
                             closeConnection(epoll_fd_, conn_data->conn_fd_);
                             continue;
                         } else if (events_[i].events & EPOLLHUP) {
-                            concurrent_servers::log_info(PREFIX_LOG, "  Connection hangup");
+                            concurrent_servers::log_info(PREFIX_LOG, "\tConnection hangup");
                             continue;
                         }
 
-                        handleConnectionEvent(events_[i], conn_data);
+                        handleConnectionEvent(events_[i].events, conn_data);
                     }
                 }
             }
@@ -212,11 +216,15 @@ private:
         const std::string prefix_log_;
         struct epoll_event event_;
 
-        void acceptConnections(epoll_event &new_conn_event, ConnectionData *conn_data) {
-            if (new_conn_event.events & EPOLLIN) {
-                concurrent_servers::log_info(PREFIX_LOG, "  EPOLLIN event, fd=", conn_data->conn_fd_);
-                concurrent_servers::log_info(PREFIX_LOG, "  start accepting connections");
+        void acceptConnections(uint32_t server_events, ConnectionData *conn_data) {
+            if (server_events & EPOLLIN) {
+                concurrent_servers::log_info(PREFIX_LOG, "\tEPOLLIN event, fd=", conn_data->conn_fd_);
+            } else {
+                concurrent_servers::log_info(PREFIX_LOG, "\tnot a EPOLLIN event, fd=", conn_data->conn_fd_, " events=", server_events);
             }
+
+            concurrent_servers::log_info(PREFIX_LOG, "\tstart accepting connections");
+
             // server socket, accept as many new connections as possible
             struct sockaddr_storage cli_addr{};
 
@@ -226,104 +234,102 @@ private:
 
                 if (conn_fd < 0) {
                     if (errno != EWOULDBLOCK and errno != EAGAIN) {
-                        concurrent_servers::log_error(PREFIX_LOG, "      could not accept a new connection. ", strerror(errno));
-//                                    throw std::runtime_error(prefix_log_ + "Could not accept a new connection");
+                        concurrent_servers::log_error(PREFIX_LOG, "\t\tcould not accept a new connection. ", strerror(errno));
+                        break;
                     } else {
                         // no more connection to accept
-                        concurrent_servers::log_info(PREFIX_LOG, "      no more connection to accept");
+                        concurrent_servers::log_info(PREFIX_LOG, "\t\tno more connection to accept");
                         break;
                     }
                 }
 
-                if (not concurrent_servers::is_nonblocking(conn_fd)) {
-                    concurrent_servers::log_error(PREFIX_LOG, "      new connection socket is blocking");
-                    concurrent_servers::set_nonblocking(conn_fd);
-                }
-
-                log_client_info(cli_addr, prefix_log_);
-                concurrent_servers::log_info(PREFIX_LOG, "      add new client socket fd=", conn_fd);
+                log_client_info(cli_addr, prefix_log_ + "\t\t");
+                concurrent_servers::log_info(PREFIX_LOG, "\t\tadd new client socket fd=", conn_fd);
 
                 // add the new client fd to epoll event list
                 event_.events = EPOLLIN | EPOLLET | EPOLLONESHOT;  // one shot edge triggered
                 event_.data.ptr = data_manager_.insert(conn_fd);
 
                 if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, conn_fd, &event_) == -1) {
-                    concurrent_servers::log_error(PREFIX_LOG, " epoll_ctl() failed. Could not register event for new client_fd ", conn_fd);
+                    concurrent_servers::log_error(PREFIX_LOG, "\t\tepoll_ctl() failed. Could not register event for new client_fd ", conn_fd);
                     break;
                 }
             }
         }
 
-        void handleConnectionEvent(epoll_event &conn_event, ConnectionData *conn_data) {
+        void handleConnectionEvent(uint32_t conn_events, ConnectionData *conn_data) {
             if (not conn_data->ready_for_write_) {
-                concurrent_servers::log_info(PREFIX_LOG, "  handleConnectionEvent() ready for read, connection events: ", conn_event.events);
-                if (not (conn_event.events & EPOLLIN)) {
-                    return;
-                }
-
-                if (not concurrent_servers::is_nonblocking(conn_data->conn_fd_)) {
-                    concurrent_servers::log_error(PREFIX_LOG, "      connection socket is blocking");
-                }
+                concurrent_servers::log_info(PREFIX_LOG, "\thandleConnectionEvent() ready for read, connection events: ", conn_events);
 
                 for (;;) {
-                    concurrent_servers::log_info(PREFIX_LOG, "  handleConnectionEvent() Read data sent from client");
+                    concurrent_servers::log_info(PREFIX_LOG, "\t\thandleConnectionEvent() Read data sent from client");
                     // Read data sent from client
                     const ssize_t rlen = read(conn_data->conn_fd_, conn_data->buffer_.data() + conn_data->read_index_, conn_data->buffer_.size() - conn_data->read_index_ + 1);
-                    concurrent_servers::log_info(PREFIX_LOG, "  rlen = ", rlen);
+                    concurrent_servers::log_info(PREFIX_LOG, "\t\trlen = ", rlen);
                     if (rlen > 0) {
                         conn_data->read_index_ += rlen;
-                        concurrent_servers::log_info(PREFIX_LOG, "  received: ", conn_data->buffer_.data());
+                        concurrent_servers::log_info(PREFIX_LOG, "\t\treceived: ", conn_data->buffer_.data());
                         continue;
                     } else if (rlen == 0) {
-                        concurrent_servers::log_info(PREFIX_LOG, "  end of file, fd=", conn_data->conn_fd_);
-                        conn_data->ready_for_write_ = true;
                         break;
                     } else { // rlen < 0
                         if (errno == EWOULDBLOCK or errno == EAGAIN) {
-                            // due to EPOLLONESHOT, after finishing reading all data in buffer,
-                            // we need to rearm the client fd to catch its event again
-                            concurrent_servers::log_info(PREFIX_LOG, "    rearm epoll event to write, fd=",
-                                                         conn_data->conn_fd_);
-
-                            event_.events = EPOLLOUT | EPOLLET | EPOLLONESHOT;  // one shot edge triggered
-                            event_.data.ptr = conn_data;
-
-                            if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, conn_data->conn_fd_, &event_) == -1) {
-                                concurrent_servers::log_error(PREFIX_LOG, "    epoll_ctl() failed to rearm");
-                            }
+                            concurrent_servers::log_info(PREFIX_LOG, "\t\tnothing else to read on socket fd=", conn_data->conn_fd_);
+                            conn_data->ready_for_write_ = true;
+                            break;
                         } else {
-                            concurrent_servers::log_error(PREFIX_LOG, "error on reading, fd=",
+                            concurrent_servers::log_error(PREFIX_LOG, "\t\terror on reading, fd=",
                                                           conn_data->conn_fd_, ", errno=",
                                                           errno, "\t", strerror(errno));
+                            rearmEpoll(conn_data, true);
+                            conn_data->reset();
+                            return;
                         }
-                        break;
                     }
                 }
-            } else if (conn_event.events & EPOLLOUT) {
-                concurrent_servers::log_info(PREFIX_LOG, "  EPOLLOUT event, fd=", conn_data->conn_fd_);
 
                 // Echo the data back to the client
+            }
+
+            if (conn_data->ready_for_write_) {
+                // Echo the data back to the client
+                concurrent_servers::log_info(PREFIX_LOG, "\t\techo the data back to the client");
                 for (;;) {
                     const ssize_t wlen = write(conn_data->conn_fd_, conn_data->buffer_.data() + conn_data->write_index_, conn_data->read_index_ - conn_data->write_index_);
-                    if (wlen >= 0) {
+                    concurrent_servers::log_info(PREFIX_LOG, "\t\twlen = ", wlen);
+                    if (wlen > 0) {
                         conn_data->write_index_ += wlen;
-                    } else { // wlen < 0
-                        if (errno == EWOULDBLOCK or errno == EAGAIN) {
-                            // due to EPOLLONESHOT, after finishing writing all data in buffer,
-                            // we need to rearm the client fd to catch its reading event again
-                            concurrent_servers::log_info(PREFIX_LOG, "    rearm epoll event to read, fd=", conn_data->conn_fd_);
-                            event_.events = EPOLLIN | EPOLLRDHUP | EPOLLET | EPOLLONESHOT;  // one shot edge triggered
-                            event_.data.ptr = conn_data;
-                            if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, conn_data->conn_fd_, &event_) == -1) {
-                                concurrent_servers::log_error(PREFIX_LOG, "    epoll_ctl() failed to rearm");
-//                                throw std::runtime_error(prefix_log_, "epoll_ctl() failed");
-                            }
-                        } else {
-                            concurrent_servers::log_error(PREFIX_LOG, "    ERROR on writing, fd=", conn_data->conn_fd_, ", errno=", errno, "\t", strerror(errno));
+                        concurrent_servers::log_info(PREFIX_LOG, "\t\tread index = ", conn_data->read_index_, " write index = ", conn_data->write_index_);
+                        if (conn_data->write_index_ >= conn_data->read_index_) {
+                            concurrent_servers::log_info(PREFIX_LOG, "\t\techo is complete");
+                            conn_data->ready_for_write_ = false;
+                            rearmEpoll(conn_data, true);
+                            break;
                         }
-                        break;
+                    } else { // wlen <= 0
+                        conn_data->ready_for_write_ = false;
+                        if (errno == EWOULDBLOCK or errno == EAGAIN) {
+                            concurrent_servers::log_info(PREFIX_LOG, "\t\tcannot write anymore socket fd=", conn_data->conn_fd_);
+                            rearmEpoll(conn_data, false);
+                            break;
+                        } else {
+                            concurrent_servers::log_error(PREFIX_LOG, "\t\tERROR on writing, fd=", conn_data->conn_fd_, ", errno=", errno, "\t", strerror(errno));
+                            rearmEpoll(conn_data, true);
+                            return;
+                        }
                     }
                 }
+            }
+        }
+
+        void rearmEpoll(ConnectionData *conn_data, bool isRead) {
+            // due to EPOLLONESHOT, after finishing writing all data in buffer,
+            // we need to rearm the client fd to catch its reading event again
+            concurrent_servers::log_info(PREFIX_LOG, "\t\trearm epoll event to read, fd=", conn_data->conn_fd_);
+            event_.events = (isRead ? EPOLLIN : EPOLLOUT) | EPOLLET | EPOLLONESHOT;  // one shot edge triggered
+            event_.data.ptr = conn_data;
+            if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, conn_data->conn_fd_, &event_) == -1) {
+                concurrent_servers::log_error(PREFIX_LOG, "\t\tepoll_ctl() failed to rearm");
             }
         }
 
@@ -343,13 +349,13 @@ private:
                 case AF_INET:   /* IPv4 address. */ {
                     char addr_str[INET_ADDRSTRLEN];
                     auto *p = (struct sockaddr_in *) &cli_addr;
-                    concurrent_servers::log_info(prefix_log, "New IPv4 client connected: address=", inet_ntop(p->sin_family, &p->sin_addr, addr_str, INET_ADDRSTRLEN), ", port=", p->sin_port);
+                    concurrent_servers::log_info(prefix_log, "line ", __LINE__, ":\t", "New IPv4 client connected: address=", inet_ntop(p->sin_family, &p->sin_addr, addr_str, INET_ADDRSTRLEN), ", port=", p->sin_port);
                     break;
                 }
                 case AF_INET6:   /* IPv6 address. */ {
                     char addr_str[INET6_ADDRSTRLEN];
                     auto *p = (struct sockaddr_in6 *) &cli_addr;
-                    concurrent_servers::log_info(prefix_log, "New IPv6 client connected: address=", inet_ntop(p->sin6_family, &p->sin6_addr, addr_str, INET_ADDRSTRLEN), ", port=", p->sin6_port);;
+                    concurrent_servers::log_info(prefix_log, "line ", __LINE__, ":\t", "New IPv6 client connected: address=", inet_ntop(p->sin6_family, &p->sin6_addr, addr_str, INET_ADDRSTRLEN), ", port=", p->sin6_port);;
                     break;
                 }
                 default: {}
@@ -362,6 +368,7 @@ private:
     const int backlog_;
     const int worker_num_;
     ConnectionDataManager data_manager_;
+    std::vector<std::thread> workers_threads;
 
     int setupServerTcpSocket(const std::string& port_num, const int backlog, bool is_nonblock, bool reuse_port) {
         int server_sfd{};

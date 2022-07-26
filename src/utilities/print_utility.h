@@ -55,7 +55,7 @@ namespace concurrent_servers {
 
     template<typename... LogContents>
     void log_info(const LogContents &... log_contents) {
-        return log("DEBUG: ", log_contents...);
+        return log("INFO: ", log_contents...);
     }
 
     template<typename... LogContents>

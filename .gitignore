@@ -1,6 +1,9 @@
 # Prerequisites
 *.d
-
+src/.idea
+.idea
+cmake-build*
+build
 # Object files
 *.o
 *.ko
