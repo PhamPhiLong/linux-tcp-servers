@@ -53,51 +53,87 @@
 
 class MultiWorkerIoMultiplexingTCPServer {
 public:
-    MultiWorkerIoMultiplexingTCPServer(std::string port_num, int backlog, int worker_num) :
+    MultiWorkerIoMultiplexingTCPServer(std::string port_num, int backlog, int worker_num, bool reuse_port) :
         server_sfd_{-1},
         port_num_{std::move(port_num)},
         backlog_{backlog},
         worker_num_{worker_num},
+        reuse_port_{reuse_port},
         data_manager_{} {
 
     }
 
     void start() {
         try {
-            server_sfd_ = setupServerTcpSocket(port_num_, backlog_, true, false);
-            concurrent_servers::log_info("\033[32m", "server socket fd=", server_sfd_, "\033[0m");
+            if (reuse_port_) {
+                // create worker threads to distribute accept() and read()
+                // for accept(), the server listening socket fd
+                for (int i{0}; i < worker_num_; ++i) {
+                    server_sfd_ = setupServerTcpSocket(port_num_, backlog_, true, false);
+                    concurrent_servers::log_info("\033[32m", "server socket fd=", server_sfd_, "\033[0m");
 
-            // create the epoll socket
-            int epoll_fd = epoll_create1(0);
-            if (epoll_fd < 0) {
-                throw std::runtime_error("epoll_create1() failed");
-            }
+                    // create the epoll socket
+                    int epoll_fd = epoll_create1(0);
+                    if (epoll_fd < 0) {
+                        throw std::runtime_error("epoll_create1() failed");
+                    }
 
-            // mark the server socket for reading, and become edge-triggered
-            struct epoll_event event{};
-            memset(&event, 0, sizeof(event));
-            event.data.ptr = data_manager_.insert(server_sfd_);
-            event.events = EPOLLIN | EPOLLEXCLUSIVE; // use level-triggered and EPOLLEXCLUSIVE to distribute accept() to
-                                                     // multiple threads or processes
-                                                     // Reference:
-                                                     //     https://idea.popcount.org/2017-02-20-epoll-is-fundamentally-broken-12/
-                                                     //     https://sudonull.com/post/14030-The-whole-truth-about-linux-epoll
-            if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_sfd_, &event) == -1) {
-                throw std::runtime_error("epoll_ctl() failed");
-            }
+                    // mark the server socket for reading, and become edge-triggered
+                    struct epoll_event event{};
+                    memset(&event, 0, sizeof(event));
+                    event.data.ptr = data_manager_.insert(server_sfd_);
+                    event.events = EPOLLIN | EPOLLEXCLUSIVE; // use level-triggered and EPOLLEXCLUSIVE to distribute accept() to
+                    // multiple threads or processes
+                    // Reference:
+                    //     https://idea.popcount.org/2017-02-20-epoll-is-fundamentally-broken-12/
+                    //     https://sudonull.com/post/14030-The-whole-truth-about-linux-epoll
+                    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_sfd_, &event) == -1) {
+                        throw std::runtime_error("epoll_ctl() failed");
+                    }
 
-            // Pre-fork worker processes to distribute accept() and read()
-            // for accept(), the server listening socket fd
-            for (int i{0}; i < worker_num_; ++i) {
-                workers_threads.emplace_back([this, epoll_fd, i]() {
-                    Worker worker{server_sfd_, epoll_fd, i, data_manager_};
-                    worker.start();
-                });
+                    workers_threads.emplace_back([this, epoll_fd, i]() {
+                        Worker worker{server_sfd_, epoll_fd, i, data_manager_};
+                        worker.start();
+                    });
+                }
+                server_sfd_ = setupServerTcpSocket(port_num_, backlog_, true, true);
+            } else {
+                server_sfd_ = setupServerTcpSocket(port_num_, backlog_, true, false);
+                concurrent_servers::log_info("\033[32m", "server socket fd=", server_sfd_, "\033[0m");
+
+                // create the epoll socket
+                int epoll_fd = epoll_create1(0);
+                if (epoll_fd < 0) {
+                    throw std::runtime_error("epoll_create1() failed");
+                }
+
+                // mark the server socket for reading, and become edge-triggered
+                struct epoll_event event{};
+                memset(&event, 0, sizeof(event));
+                event.data.ptr = data_manager_.insert(server_sfd_);
+                event.events = EPOLLIN | EPOLLEXCLUSIVE; // use level-triggered and EPOLLEXCLUSIVE to distribute accept() to
+                // multiple threads or processes
+                // Reference:
+                //     https://idea.popcount.org/2017-02-20-epoll-is-fundamentally-broken-12/
+                //     https://sudonull.com/post/14030-The-whole-truth-about-linux-epoll
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_sfd_, &event) == -1) {
+                    throw std::runtime_error("epoll_ctl() failed");
+                }
+
+                // create worker threads to distribute accept() and read()
+                // for accept(), the server listening socket fd
+                for (int i{0}; i < worker_num_; ++i) {
+                    workers_threads.emplace_back([this, epoll_fd, i]() {
+                        Worker worker{server_sfd_, epoll_fd, i, data_manager_};
+                        worker.start();
+                    });
+                }
             }
 
             for (auto &thread : workers_threads) {
                 thread.join();
             }
+
         } catch (const std::runtime_error& e) {
             concurrent_servers::log_error(e.what(), "\t", strerror(errno));
             close(server_sfd_);
@@ -367,6 +403,7 @@ private:
     const std::string port_num_;
     const int backlog_;
     const int worker_num_;
+    const bool reuse_port_;
     ConnectionDataManager data_manager_;
     std::vector<std::thread> workers_threads;
 

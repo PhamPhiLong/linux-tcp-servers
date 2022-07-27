@@ -3,6 +3,7 @@ CPP := g++
 
 BUILD_DIR = build
 CPP_FLAGS = -std=c++17 -Wall -Wextra -Wshadow -Weffc++ -Wstrict-aliasing -pedantic -Werror $(INCLUDE_DIR)
+OPTIMIZATION_FLAFG = -O3 -march=native
 DEP_DIR := $(BUILD_DIR)/dependency
 DEPFLAGS = -MT $@ -MMD -MP -MF $(DEP_DIR)/$*.Td
 LDIR = src/lib
@@ -18,8 +19,7 @@ DEPS = $(patsubst %,$ (INCLUDE_DIR)/%, $(HEADERS))
 
 BIN_SRC = $(wildcard $(SRC_DIR)/servers/*.cpp) $(wildcard $(SRC_DIR)/clients/*.cpp)
 SRC = $(wildcard $(SRC_DIR)/*/*.cpp)
-#DEBUG_FLAG =  -ggdb -O0
-DEBUG_FLAG =
+DEBUG_FLAG =  -ggdb -O0
 CPP_FLAGS += $(DEBUG_FLAG)
 OBJ_DIR = $(BUILD_DIR)/obj
 OBJ = $(filter-out $(OBJ_DIR)/clients/%.o $(OBJ_DIR)/servers/%.o, $(patsubst $(SRC_DIR)%.cpp, $(OBJ_DIR)%.o, $(SRC)))
